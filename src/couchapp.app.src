@@ -1,0 +1,5 @@
+{application, couchapp,
+  [{desc, "Sync design docs into couchdb"},
+   {vsn, git},
+   {applications, [couchbeam]}]
+}.
