@@ -81,19 +81,22 @@ attr_acc([Prop|Properties], [Stan|Standarts], Options, Acc) ->
 folder_to_json(Folder) ->
     case file:list_dir(Folder) of
         {ok, Files} ->
-            {[do_entry(Folder, F) || F <- Files]};
-        Error -> Error
+            lists:flatmap(fun (F) -> do_entry(Folder, F) end, Files);
+        Error ->
+            Error
     end.
 
+do_entry(_Dir, [$. | _]) ->
+    [];
 do_entry(Directory, Name) ->
     Path = filename:join(Directory, Name),
     case filelib:is_dir(Path) of
         true ->
-            {list_to_binary(Name), folder_to_json(Path)};
+            [{list_to_binary(Name), folder_to_json(Path)}];
         false ->
             case file:read_file(Path) of
                 {ok, Content} ->
-                    {list_to_binary(filename:rootname(Name)), Content};
+                    [{list_to_binary(filename:rootname(Name)), Content}];
                 {error, Error} ->
                     throw({error, Error})
             end
