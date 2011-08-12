@@ -1,3 +1,6 @@
 /ebin/*.beam
 /ebin/*.app
+/test-log/*
+/test/*.beam
+/priv/*
 *.*~

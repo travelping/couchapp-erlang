@@ -1,5 +1,7 @@
 -module(couchapp).
--export([folder_to_json/1, sync/2, compare/2]).
+-export([folder_to_json/1, sync/2, sync/3, compare/2]).
+
+-include_lib("couchbeam/include/couchbeam.hrl").
 
 % Options:
 % {id, "some"}
@@ -8,36 +10,38 @@
 % DB property = {db, "charging"}
 defaults() -> ["127.0.0.1", 5984, "database"].
 
+
 sync(Folder, Options) ->
+    [Host, Port, DBPath] = attributes([host, port, db], defaults(), Options),
+    DBOptions = case proplists:get_value(basic_auth, Options) of
+                    undefined           -> [];
+                    AuthorisationParams -> [{basic_auth, AuthorisationParams}]
+                end,
+    Server   = couchbeam:server_connection(Host, Port, "", DBOptions),
+    {ok, DB} = couchbeam:open_db(Server, DBPath),
+    sync(DB, Folder, Options).
+
+
+sync(DB, Folder, Options) ->
     DDocId        = list_to_binary("_design/" ++ proplists:get_value(id, Options)),
     DDocLanguage  = proplists:get_value(language, Options, <<"javascript">>),
     {ok, {FolderProps}} = folder_to_json(Folder),
     NewProps      = [{<<"_id">>, DDocId}, {<<"language">>, DDocLanguage} | FolderProps],
     NewDesignDoc  = {NewProps},
-
-    [Host, Port, DBPath] = attributes([host, port, db], defaults(), Options),
-    DBOptions = case proplists:get_value(user, Options) of
-                    undefined -> [];
-                    User      -> [{basic_auth, {User, proplists:get_value(password, Options, "")}}]
-                end,
-    Server   = couchbeam:server_connection(Host, Port, "", DBOptions),
-    {ok, DB} = couchbeam:open_db(Server, DBPath),
-
     case couchbeam:open_doc(DB, DDocId) of
         {ok, {PropsInDB}} ->
             case compare(NewDesignDoc, {proplists:delete(<<"_rev">> , PropsInDB)}) of
                 true ->
                     Rev = lists:keyfind(<<"_rev">>, 1, PropsInDB),
-                    log_update(Host, Port, DBPath, DDocId),
+                    log_update(DB, DDocId),
                     couchbeam:save_doc(DB, {[Rev | NewProps]});
                 false ->
                     ok
             end;
         {error, not_found} ->
-            log_update(Host, Port, DBPath, DDocId),
+            log_update(DB, DDocId),
             couchbeam:save_doc(DB, NewDesignDoc)
     end.
-
 
 compare({Res}, {ObjInDB}) -> compare(Res, ObjInDB);
 compare([], []) -> false;
@@ -85,9 +89,19 @@ folder_to_json(Folder) ->
             Error
     end.
 
-do_entry(_Dir, [$. | _]) ->
+
+
+do_entry(Dir, Name) ->
+    case lists:reverse(Name) of
+        [$~ | _] ->
+            [];
+        _Other ->
+            do_entry_checked(Dir, Name)
+    end.
+
+do_entry_checked(_Dir, [$. | _]) ->
     [];
-do_entry(Directory, Name) ->
+do_entry_checked(Directory, Name) ->
     Path = filename:join(Directory, Name),
     case filelib:is_dir(Path) of
         true ->
@@ -102,6 +116,9 @@ do_entry(Directory, Name) ->
             end
     end.
 
-log_update(Host, Port, Path, DDoc) ->
-    Report = io_lib:format("Pushing design document ~p~nCouchDB: ~s:~p/~s", [DDoc, Host, Port, Path]),
+log_update(DB, DDoc) ->
+    Report = io_lib:format("Pushing design document ~p~nCouchDB: ~s", [DDoc, get_db_url(DB)]),
     error_logger:info_report(Report).
+
+get_db_url(#db{name = Name, server = Server}) ->
+    couchbeam:make_url(Server, [Name], []).
