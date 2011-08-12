@@ -3,7 +3,6 @@
 
 % Options:
 % {id, "some"}
-% id from folder name = {folder_id, true}
 % Host property = {host, "localhost"}
 % Port property = {port, 10001}
 % DB property = {db, "charging"}
@@ -12,7 +11,7 @@ defaults() -> ["127.0.0.1", 5984, "database"].
 sync(Folder, Options) ->
     DDocId        = list_to_binary("_design/" ++ proplists:get_value(id, Options)),
     DDocLanguage  = proplists:get_value(language, Options, <<"javascript">>),
-    {FolderProps} = folder_to_json(Folder),
+    {ok, {FolderProps}} = folder_to_json(Folder),
     NewProps      = [{<<"_id">>, DDocId}, {<<"language">>, DDocLanguage} | FolderProps],
     NewDesignDoc  = {NewProps},
 
@@ -81,7 +80,7 @@ attr_acc([Prop|Properties], [Stan|Standarts], Options, Acc) ->
 folder_to_json(Folder) ->
     case file:list_dir(Folder) of
         {ok, Files} ->
-            lists:flatmap(fun (F) -> do_entry(Folder, F) end, Files);
+            {ok, {lists:flatmap(fun (F) -> do_entry(Folder, F) end, Files)}};
         Error ->
             Error
     end.
@@ -92,7 +91,8 @@ do_entry(Directory, Name) ->
     Path = filename:join(Directory, Name),
     case filelib:is_dir(Path) of
         true ->
-            [{list_to_binary(Name), folder_to_json(Path)}];
+            {ok, DirContents} = folder_to_json(Path),
+            [{list_to_binary(Name), DirContents}];
         false ->
             case file:read_file(Path) of
                 {ok, Content} ->
