@@ -1,5 +1,5 @@
 -module(couchapp).
--export([folder_to_json/1, sync/2, sync/3, compare/2]).
+-export([folder_to_json/1, sync/3, sync/4, compare/2]).
 
 -include_lib("couchbeam/include/couchbeam.hrl").
 
@@ -10,8 +10,7 @@
 % DB property = {db, "charging"}
 defaults() -> ["127.0.0.1", 5984, "database"].
 
-
-sync(Folder, Options) ->
+get_db_connection(Options) ->
     [Host, Port, DBPath] = attributes([host, port, db], defaults(), Options),
     DBOptions = case proplists:get_value(basic_auth, Options) of
                     undefined           -> [];
@@ -19,15 +18,21 @@ sync(Folder, Options) ->
                 end,
     Server   = couchbeam:server_connection(Host, Port, "", DBOptions),
     {ok, DB} = couchbeam:open_db(Server, DBPath),
-    sync(DB, Folder, Options).
+    DB.
 
+sync(Folder, Docs, Options) ->
+    sync(get_db_connection(Options), Folder, Docs, Options).
 
-sync(DB, Folder, Options) ->
+sync(DB, Folder, Docs, Options) ->
+    {ok, {FolderProps}} = folder_to_json(Folder),
+    sync_doc(DB, FolderProps, Docs, Options).
+
+sync_doc(DB, FolderProps, Docs, Options) ->
     DDocId        = list_to_binary("_design/" ++ proplists:get_value(id, Options)),
     DDocLanguage  = proplists:get_value(language, Options, <<"javascript">>),
-    {ok, {FolderProps}} = folder_to_json(Folder),
     NewProps      = [{<<"_id">>, DDocId}, {<<"language">>, DDocLanguage} | FolderProps],
-    NewDesignDoc  = {NewProps},
+    NewDesignDoc  = vmerge({NewProps}, {Docs}),
+    io:format(user, "new design doc: ~p~n", [NewDesignDoc]),
     case couchbeam:open_doc(DB, DDocId) of
         {ok, {PropsInDB}} ->
             case compare(NewDesignDoc, {proplists:delete(<<"_rev">> , PropsInDB)}) of
@@ -89,7 +94,23 @@ folder_to_json(Folder) ->
             Error
     end.
 
+merge([{K1, V1} | R1], [{K2, V2} | R2]) when K1 == K2 ->
+    [{K1, vmerge(V1, V2)} | merge(R1, R2)];
+merge([{K1, V1} | R1], [{K2, V2} | R2]) when K1 < K2 ->
+    [{K1, V1} | merge(R1, [{K2, V2} | R2])];
+merge([{K1, V1} | R1], [{K2, V2} | R2]) when K1 > K2 ->
+    [{K2, V2} | merge([{K1, V1} | R1], R2)];
+merge([], []) ->
+    [];
+merge([], R2) ->
+    R2;
+merge(R1, []) ->
+    R1.
 
+vmerge({Json1}, {Json2}) ->
+    {merge(lists:sort(Json1), lists:sort(Json2))};
+vmerge(_, Value2) ->
+    Value2.
 
 do_entry(Dir, Name) ->
     case lists:reverse(Name) of
